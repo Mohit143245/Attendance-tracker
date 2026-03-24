@@ -1,71 +1,66 @@
 import streamlit as st
 import pandas as pd
-import csv
-import os
 from datetime import date
-
-FILE_NAME = "attendance.csv"
-
-# ==========================================
-# Utility functions
-# ==========================================
-def load_data():
-    if os.path.exists(FILE_NAME):
-        df = pd.read_csv(FILE_NAME)
-    else:
-        df = pd.DataFrame(columns=["Roll No", "Name", "Date", "Status"])
-    return df
+import pymysql
 
 
-def save_data(df):
-    df.to_csv(FILE_NAME, index=False)
+def get_connection():
+    return pymysql.connect(
+        host="localhost",
+        user="root",
+        password="root123",  
+        database="attendance_db"
+    )
 
 
-# ==========================================
-# CORE: HARD DUPLICATE-PROOF MARK ATTENDANCE
-# ==========================================
 def mark_attendance(roll_no, name, status):
-    today = date.today().strftime("%Y-%m-%d")
-    df = load_data()
+    today = date.today()
 
-    # Normalize data
-    df["Roll No"] = df["Roll No"].astype(str).str.strip()
-    df["Date"] = df["Date"].astype(str).str.strip()
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    roll_no = str(roll_no).strip()
-    name = name.strip()
+    cursor.execute("""
+    INSERT INTO attendance (roll_no, name, date, status)
+    VALUES (%s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    status = VALUES(status)
+    """, (roll_no.strip(), name.strip(), today, status))
 
-    # HARD DELETE existing record for same Roll No + Date
-    df = df[~((df["Roll No"] == roll_no) & (df["Date"] == today))]
-
-    # Insert fresh record
-    new_row = pd.DataFrame([{
-        "Roll No": roll_no,
-        "Name": name,
-        "Date": today,
-        "Status": status
-    }])
-
-    df = pd.concat([df, new_row], ignore_index=True)
-    save_data(df)
+    conn.commit()
+    conn.close()
 
 
-# ==========================================
-# Other features
-# ==========================================
 def view_today_attendance():
-    df = load_data()
-    today = date.today().strftime("%Y-%m-%d")
-    today_df = df[df["Date"] == today]
+    today = date.today()
 
-    if today_df.empty:
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM attendance WHERE date = %s", (today,))
+    data = cursor.fetchall()
+
+    conn.close()
+
+    df = pd.DataFrame(data, columns=["Roll No", "Name", "Date", "Status"])
+
+    if df.empty:
         st.info("No attendance records for today.")
     else:
-        st.dataframe(today_df)
+        st.dataframe(df)
 
 
 def generate_full_report():
-    df = load_data()
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM attendance")
+    data = cursor.fetchall()
+
+    conn.close()
+
+    df = pd.DataFrame(data, columns=["Roll No", "Name", "Date", "Status"])
+
     if df.empty:
         st.info("No attendance data available.")
         return
@@ -80,7 +75,16 @@ def generate_full_report():
 
 
 def export_to_excel():
-    df = load_data()
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM attendance")
+    data = cursor.fetchall()
+
+    conn.close()
+
+    df = pd.DataFrame(data, columns=["Roll No", "Name", "Date", "Status"])
+
     if df.empty:
         st.warning("No data to export.")
         return
@@ -90,33 +94,44 @@ def export_to_excel():
 
 
 def delete_student_record(roll_no):
-    df = load_data()
-    roll_no = str(roll_no).strip()
-    df = df[df["Roll No"].astype(str) != roll_no]
-    save_data(df)
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM attendance WHERE roll_no = %s", (roll_no.strip(),))
+    conn.commit()
+    conn.close()
+
     st.success(f"All records for Roll No {roll_no} deleted.")
 
 
 def search_student(roll_no):
-    df = load_data()
-    roll_no = str(roll_no).strip()
-    result = df[df["Roll No"].astype(str) == roll_no]
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    if result.empty:
+    cursor.execute("SELECT * FROM attendance WHERE roll_no = %s", (roll_no.strip(),))
+    data = cursor.fetchall()
+
+    conn.close()
+
+    df = pd.DataFrame(data, columns=["Roll No", "Name", "Date", "Status"])
+
+    if df.empty:
         st.info("No records found.")
     else:
-        st.dataframe(result)
+        st.dataframe(df)
 
 
 def reset_attendance():
-    df = pd.DataFrame(columns=["Roll No", "Name", "Date", "Status"])
-    save_data(df)
-    st.success("Attendance file reset successfully.")
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM attendance")
+    conn.commit()
+    conn.close()
+
+    st.success("Attendance database reset successfully.")
 
 
-# ==========================================
-# Streamlit UI
-# ==========================================
 st.set_page_config(page_title="Attendance Tracker", layout="wide")
 st.title("🎓 Attendance Management System")
 
@@ -133,9 +148,7 @@ menu = st.sidebar.selectbox(
     ]
 )
 
-# ==========================================
-# Menu Actions
-# ==========================================
+
 if menu == "Mark Attendance":
     st.header("Mark Attendance")
 
@@ -181,6 +194,6 @@ elif menu == "Delete Student":
 
 
 elif menu == "Reset Attendance":
-    st.header("Reset Attendance File")
+    st.header("Reset Attendance Database")
     if st.button("Reset All Data"):
         reset_attendance()
