@@ -9,7 +9,7 @@ def get_connection():
         return pymysql.connect(
             host="localhost",
             user="root",
-            password="root123",   # change this if your MySQL password is different
+            password="@PRICITY2118",   # change this if your MySQL password is different
             database="attendance_db"
         )
     except Exception as e:
